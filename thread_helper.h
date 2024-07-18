@@ -49,10 +49,15 @@ namespace helper {
 
   static inline void SetCurrentThreadName(const std::string& name) {
 #if defined(WIN32)
-    // The SetThreadDescription API works even if no debugger is attached.
-    // The names set with this API also show up in ETW traces. Very handy.
-    std::wstring wide_thread_name = helper::Utf82Unicode(name);
-    SetThreadDescription(::GetCurrentThread(), wide_thread_name.c_str());
+    typedef HRESULT(WINAPI* RTC_SetThreadDescription)(HANDLE hThread, PCWSTR lpThreadDescription);
+    static auto set_thread_description_func = reinterpret_cast<RTC_SetThreadDescription>
+        (::GetProcAddress(::GetModuleHandleA("Kernel32.dll"), "SetThreadDescription"));
+    if (set_thread_description_func) {
+        // The SetThreadDescription API works even if no debugger is attached.
+        // The names set with this API also show up in ETW traces. Very handy.
+        std::wstring wide_thread_name = helper::Utf82Unicode(name);
+        set_thread_description_func(::GetCurrentThread(), wide_thread_name.c_str());
+  }
 #elif defined(__LINUX__) || defined(__ANDROID__)
     prctl(PR_SET_NAME, reinterpret_cast<unsigned long>(name.c_str()));  // NOLINT
 #elif defined(__MACH__) || defined(__APPLE__)

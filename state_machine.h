@@ -19,17 +19,17 @@ namespace helper {
     class StateMachine {
     public:
         enum class MessageType {
-            ANYTYPE =-1,
+            ANYTYPE = -1,
             REQUEST,
             RESPONSE,
             EVENT,
         };
     public:
-        using Task = std::function<void(C* class_, void * method, bool general)> ;
+        using Task = std::function<void(C* class_, void* method, bool general)>;
 
         class MethodCallData {
         public:
-            MethodCallData(const Location & loc, const MessageType & t, const MethodId & id)
+            MethodCallData(const Location& loc, const MessageType& t, const MethodId& id)
                 :loc_(loc), type_(t), id_(id) {}
             virtual ~MethodCallData() {}
         public:
@@ -46,64 +46,75 @@ namespace helper {
         {
             MessageType type_ = 0;
             MethodId id_ = 0;
-            void * func_ptr_ = nullptr;
+            void* func_ptr_ = nullptr;
         };
 
         class BaseState {
         public:
-          BaseState(const std::string& id) :id_(id) {}
-          BaseState(){}
-          virtual ~BaseState(){}
+            BaseState(const std::string& id) :id_(id) {}
+            BaseState() {}
+            virtual ~BaseState() {}
         public:
-          const std::string& GetId() const { return id_; }
-          std::map<uint32_t, Action> onentry_;
-          std::map<uint32_t, Action> onexit_;
+            const std::string& GetId() const { return id_; }
+            void AddOnEntry(const Action&& action) {
+                this->onentry_.push_back(std::move(action));
+            }
+            void AddOnExit(const Action&& action) {
+                this->onexit_.push_back(std::move(action));
+            }
         private:
-          std::string id_;
-          class BaseState* parent_ = nullptr;
-          bool active_ = false;
-          friend class StateMachine;
+            std::string id_;
+            std::vector<Action> onentry_;
+            std::vector<Action> onexit_;
+            class BaseState* parent_ = nullptr;
+            bool active_ = false;
+            friend class StateMachine;
         };
 
 
         class  Final : public BaseState {
         public:
-          Final() {}
+            Final() {}
         };
 
 
-
-        class State : public BaseState{
+        class Parallel : public BaseState {
         public:
-          class Parallel : public BaseState {
-          public:
-            Parallel(){}
-            State& operator[](const std::string& keyval) {
-              return children_[keyval];
+            Parallel() {}
+            class State& operator[](const std::string& keyval) {
+                return children_[keyval];
             }
-            std::map<std::string, State> children_;
-          private:
-
+        private:
+            std::map<std::string, class State> children_;
             friend class StateMachine;
-          };
+        };
+
+        class State : public BaseState {
+
         public:
-          State(const std::string& id)
-            :BaseState(id) {}
-          State() {}
-          State& operator[](const std::string& keyval) {
-            return children_[keyval];
-          }
-        public:
+            State(const std::string& id)
+                :BaseState(id) {}
+            State() {}
+            State& operator[](const std::string& keyval) {
+                return children_[keyval];
+            }
+            void AddCond(const Condition&& cond) {
+                this->cond_.push_back(std::move(cond));
+            }
+
+            class Parallel& Parallel(const std::string& keyval) {
+                return this->parallel_[keyval];
+            }
+        private:
             std::vector<Condition> cond_;
             std::map<std::string, State> children_;
-            std::map<std::string, Parallel> parallel_;
-            std::map<std::string, Final> final_;
+            std::map<std::string, class Parallel> parallel_;
             friend class StateMachine;
         };
 
     public:
-        StateMachine(const std::string &name) 
-          :name_(name){
+        StateMachine(const std::string& name)
+            :name_(name) {
         }
         virtual ~StateMachine()
         {
@@ -118,7 +129,7 @@ namespace helper {
         void Stop(bool consume_all_at_exit = true) {
             if (thread_run_.joinable()) { //线程在运行中
                 if (!consume_all_at_exit && thread_is_run_) {
-                  *thread_is_run_ = false; //设置运行标志为false
+                    *thread_is_run_ = false; //设置运行标志为false
                 }
                 task_queue_.Put(nullptr);
 
@@ -131,37 +142,142 @@ namespace helper {
             }
         }
 
-        const std::string & GetCurStateId() { 
+        const std::string& GetCurStateId() {
             return this->current_state_->GetId();
         }
 
-        std::thread::id GetWorkerThreadId(){
+        std::thread::id GetWorkerThreadId() {
             return thread_run_.get_id();
         }
 
         template<typename Method, typename... Args>
-        auto AddRequetTask(Location && loc, MethodId&& id, Args&&... args)
+        auto AddRequetTask(Location&& loc, MethodId&& id, Args&&... args)
         {
             auto future = AddTask<Method, Args...>(std::forward<Location>(loc), MessageType::REQUEST, std::forward<MethodId>(id), std::forward<Args>(args)...);
             return future.get();
         }
 
         template<typename Method, typename... Args> //不等待返回
-        void AddResponseTask(Location && loc, MethodId&& id, Args&&... args)
+        void AddResponseTask(Location&& loc, MethodId&& id, Args&&... args)
         {
             AsyncAddTask<Method>(std::forward<Location>(loc), MessageType::RESPONSE, std::forward<MethodId>(id), std::forward<Args>(args)...);
             return;
         }
 
         template<typename Method, typename... Args>//不等待返回
-        void AddEventTask(Location && loc, MethodId&& id, Args&&... args)
+        void AddEventTask(Location&& loc, MethodId&& id, Args&&... args)
         {
             AsyncAddTask<Method>(std::forward<Location>(loc), MessageType::EVENT, std::forward<MethodId>(id), std::forward<Args>(args)...);
             return;
         }
 
+        virtual bool TransitionRoot()final {
+            return Transition(&this->root_state_);
+        }
+
+        virtual bool TransitionFinal()final {
+            return Transition(&this->final_);
+        }
+
         virtual bool Transition(const std::string& target) final {
-            BaseState* target_state = GetState(target);
+            return Transition(GetState(target));
+        }
+
+        virtual State& Root() final {
+            return this->root_state_;
+        }
+
+        virtual Final &Final()final {
+            return this->final_;
+        }
+
+    protected:
+        class State root_state_;
+        class Final final_;
+    private:
+        BaseState* current_state_ = nullptr;
+        std::map<std::string, BaseState*> stateId_map_;
+        std::thread thread_run_;
+        bool* thread_is_run_ = nullptr;
+        helper::MessageBuffer<std::shared_ptr<MethodCallData>> task_queue_;
+        std::string name_; //状态机名称，也用作线程名称
+    private:
+        //添加任务，packaged_task 中返回的future，不调用get()不会阻塞
+        template<typename Method, typename... Args>
+        auto AddTask(Location&& loc, MessageType&& type, MethodId&& id, Args&&... args)
+        {
+
+            using RetType = decltype(((Method)nullptr)(nullptr, loc, std::forward<Args>(args)...)); //推导返回值类型
+            auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
+
+            typedef RetType(*GeneralMethod)(C* class_, const Location& loc);
+            auto func = [&loc, &args...](C* class_, void* method_, bool general) {
+                if (general)
+                    return ((GeneralMethod)(method_))(class_, loc);
+                else
+                    return ((Method)(method_))(class_, loc, std::forward<Args>(args)...);
+            };
+
+            //在这里使用统一的packpaged类型
+            auto taskPack = std::make_shared<std::packaged_task<RetType(C* class_, void* method_, bool general)>>(func);
+
+            std::future<RetType> futureRet = taskPack->get_future();
+            task_data->task_ = [taskPack](C* class_, void* method_, bool general)->void { (*taskPack)(class_, method_, general); };
+            task_queue_.Put(task_data);
+
+            return futureRet;
+        }
+
+        template<typename Method, typename... Args>
+        auto AsyncAddTask(Location&& loc, MessageType&& type, MethodId&& id, Args&&... args)->void
+        {
+            auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
+
+            typedef void(*GeneralMethod)(C* class_, const Location& loc);
+            //参数使用临时变量
+            auto func = [loc, args...](C* class_, void* method_, bool general)->void {
+                if (general)
+                    return ((GeneralMethod)(method_))(class_, loc);
+                else
+                    return ((Method)(method_))(class_, loc, std::move(args)...);
+            };
+
+            //在这里使用统一的packpaged类型
+            auto taskPack = std::make_shared<std::packaged_task<void(C* class_, void* method_, bool general)>>(func);
+
+            task_data->task_ = [taskPack](C* class_, void* method_, bool general)->void { (*taskPack)(class_, method_, general); };
+            task_queue_.Put(task_data);
+            return;
+
+        }
+
+        //解析状态机结构
+        void ParseState(BaseState* baseState, BaseState* parent) {
+            baseState->parent_ = parent;
+            stateId_map_[baseState->GetId()] = baseState;
+            State* state = dynamic_cast<State*>(baseState);
+            if (state) {
+                for (auto& parallel : state->parallel_) {
+                    parallel.second.id_ = parallel.first;
+                    ParseState(&parallel.second, baseState);
+                }
+
+                for (auto& child : state->children_) {
+                    child.second.id_ = child.first;
+                    ParseState(&child.second, baseState);
+                }
+            }
+
+            auto parallel = dynamic_cast<class Parallel*>(baseState);
+            if (parallel) {
+                for (auto& child : parallel->children_) {
+                    child.second.id_ = child.first;
+                    ParseState(&child.second, baseState);
+                }
+            }
+        }
+
+        bool Transition(BaseState* target_state) {
 
             if (target_state)
             {
@@ -196,7 +312,7 @@ namespace helper {
                 }
 
                 for (auto rcurr = current_state_path_list.rbegin(); rcurr != current_state_path_list.rend(); ++rcurr)// 逆序 
-                { 
+                {
                     auto same_state = std::find(target_state_path_list.begin(), target_state_path_list.end(), *rcurr);
                     //找到相同的父节点
                     if (same_state != target_state_path_list.end())
@@ -204,12 +320,14 @@ namespace helper {
                         //处理离开路径状态
                         auto leave_state = current_state_path_list.rbegin();
                         while (leave_state != rcurr) {
-                          processExit(*leave_state);
-                          ++leave_state;
+                            processExit(*leave_state);
+                            ++leave_state;
                         }
                         //设置当前状态为最短路径根结点
                         this->current_state_ = *same_state;
-                        this->current_state_->active_ = true;
+                        if (this->current_state_) {
+                            this->current_state_->active_ = true;
+                        }
 
                         //处理进入路径状态
                         auto entry_state = ++same_state;
@@ -228,103 +346,8 @@ namespace helper {
             }
         }
 
-    protected:
-        State root_state_;
-    private:
-        BaseState * current_state_ = nullptr;
-        std::map<std::string, BaseState *> stateId_map_;
-        std::thread thread_run_;
-        bool * thread_is_run_ = nullptr;
-        helper::MessageBuffer<std::shared_ptr<MethodCallData>> task_queue_;
-        std::string name_; //状态机名称，也用作线程名称
-    private:
-        //添加任务，packaged_task 中返回的future，不调用get()不会阻塞
-        template<typename Method, typename... Args>
-        auto AddTask(Location && loc, MessageType && type, MethodId && id, Args&&... args)
-        {
-
-            using RetType = decltype(((Method)nullptr)(nullptr, loc, std::forward<Args>(args)...)); //推导返回值类型
-            auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
-
-            typedef RetType (* GeneralMethod)(C* class_, const Location& loc);
-            auto func = [&loc, &args...](C * class_, void* method_, bool general) {
-              if (general) 
-                return ((GeneralMethod)(method_))(class_, loc);
-              else
-                return ((Method)(method_))(class_, loc, std::forward<Args>(args)...);
-            };
-
-            //在这里使用统一的packpaged类型
-            auto taskPack = std::make_shared<std::packaged_task<RetType(C * class_, void * method_, bool general)>>(func);
-
-            std::future<RetType> futureRet = taskPack->get_future();
-            task_data->task_ = [taskPack](C * class_, void * method_, bool general)->void { (*taskPack)(class_, method_, general); };
-            task_queue_.Put(task_data);
-
-            return futureRet;
-        }
-
-        template<typename Method, typename... Args>
-        auto AsyncAddTask(Location&& loc, MessageType&& type, MethodId&& id, Args&&... args)->void
-        {
-          auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
-
-          typedef void(*GeneralMethod)(C* class_, const Location& loc);
-          //参数使用临时变量
-          auto func = [loc, args...](C * class_, void * method_, bool general)->void {
-            if (general)
-              return ((GeneralMethod)(method_))(class_, loc);
-            else
-              return ((Method)(method_))(class_, loc, std::move(args)...);
-          };
-
-          //在这里使用统一的packpaged类型
-          auto taskPack = std::make_shared<std::packaged_task<void(C * class_, void * method_, bool general)>>(func);
-
-          task_data->task_ = [taskPack](C * class_, void * method_, bool general)->void { (*taskPack)(class_, method_, general); };
-          task_queue_.Put(task_data);
-          return;
-
-        }
-
-        //解析状态机结构
-        void ParseState(BaseState * baseState, BaseState * parent) {
-            baseState->parent_ = parent;
-            stateId_map_[baseState->GetId()] = baseState;
-            State * state = dynamic_cast<State*>(baseState);
-            if (state) {
-                for (auto& parallel : state->parallel_) {
-                    parallel.second.id_ = parallel.first;
-                    ParseState(&parallel.second, baseState);
-                }
-
-                for (auto & final :state->final_)
-                {
-                    final.second.id_ = final.first;
-                    ParseState(&final.second, baseState);
-                }
-
-                for (auto& child : state->children_) {
-                    child.second.id_ = child.first;
-                    ParseState(&child.second, baseState);
-                }
-            }
-
-            auto parallel = dynamic_cast<State::Parallel*>(baseState);
-            if (parallel) {
-              for (auto& child : parallel->children_) {
-                child.second.id_ = child.first;
-                ParseState(&child.second, baseState);
-              }
-            }
-
-            Final* final = dynamic_cast<Final*>(baseState);
-            if (final) {
-            }
-        }
-
-        BaseState * GetState(const std::string & stateId) {
-            const auto & state = this->stateId_map_.find(stateId);
+        BaseState* GetState(const std::string& stateId) {
+            const auto& state = this->stateId_map_.find(stateId);
             if (state != stateId_map_.end()) {
                 return state->second;
             }
@@ -343,7 +366,7 @@ namespace helper {
                     }
                 }
                 for (auto& parallel : state->parallel_) {
-                    if(parallel.second.active_ == true){
+                    if (parallel.second.active_ == true) {
                         return &parallel.second;
                     }
                 }
@@ -352,7 +375,7 @@ namespace helper {
         }
 
         void processExit(BaseState* leave) {
-            auto* parallel = dynamic_cast<State::Parallel*>(leave);
+            auto* parallel = dynamic_cast<class Parallel*>(leave);
             if (parallel) {//是parallel状态，离开所有子状态
                 for (auto& child : parallel->children_) {
                     BaseState* active_state = findActiveState(&child.second);
@@ -381,28 +404,28 @@ namespace helper {
             this->current_state_->active_ = true;
             processOnEntry(this->current_state_);
 
-            auto* parallel = dynamic_cast<State::Parallel*>(entry);
+            auto* parallel = dynamic_cast<class Parallel*>(entry);
             if (parallel) {//是parallel状态，进入所有子状态
-              for (auto& child : parallel->children_) {
-                this->current_state_ = &child.second;
-                child.second.active_ = true;
-                processOnEntry(&child.second);
-              }
+                for (auto& child : parallel->children_) {
+                    this->current_state_ = &child.second;
+                    child.second.active_ = true;
+                    processOnEntry(&child.second);
+                }
             }
         }
 
         void processOnEntry(const BaseState* entry_state) {
             for (const auto& action : entry_state->onentry_) {
-              if (action.second) {
-                action.second();
-              }
+                if (action) {
+                    action();
+                }
             }
         }
 
-        void processOnExit(BaseState * leave_state) {
-            for (const auto & action : leave_state->onexit_) {
-                if (action.second) {
-                    action.second();
+        void processOnExit(BaseState* leave_state) {
+            for (const auto& action : leave_state->onexit_) {
+                if (action) {
+                    action();
                 }
             }
         }
@@ -417,14 +440,14 @@ namespace helper {
                         return true;
                     }
                     else if ((task_data->type_ == c.type_) && (c.id_ == (MethodId)-1)) {
-                      //processCondtion
-                      task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, true);
-                      return true;
+                        //processCondtion
+                        task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, true);
+                        return true;
                     }
                 }
             }
 
-            auto parallel = dynamic_cast<State::Parallel*>(filterState);
+            auto parallel = dynamic_cast<class Parallel*>(filterState);
             if (parallel) {//是parallel状态，匹配所有子分支
                 for (auto& child : parallel->children_) {
                     auto filter_Parallel = findActiveState(&child.second);
@@ -433,7 +456,7 @@ namespace helper {
                             return true;
                         }
                         else {
-                          filter_Parallel = filter_Parallel->parent_;
+                            filter_Parallel = filter_Parallel->parent_;
                         }
                     }
                 }
@@ -450,7 +473,7 @@ namespace helper {
                 在自己线程调用Stop时，不能等待线程结束，
                 在执行完 task 后，this对象已经释放，thread_is_run_ 变的不可访问。
             */
-            bool * tmp_thread_is_run = this->thread_is_run_;
+            bool* tmp_thread_is_run = this->thread_is_run_;
             processEntry(this->current_state_);
 
             while (*tmp_thread_is_run) {
@@ -467,9 +490,9 @@ namespace helper {
                     }
                 }
                 if (task_data == nullptr) {
-                  break;
+                    break;
                 }
-                
+
             }
 
             delete tmp_thread_is_run;
