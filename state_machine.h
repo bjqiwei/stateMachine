@@ -41,12 +41,50 @@ namespace helper {
         };
 
         using Action = std::function<void()>;
+        class ActionVector : public std::vector<Action> {
+        public:
+            ActionVector() = default;
+            ~ActionVector() = default;
+            ActionVector& operator +(const Action& action)
+            {
+                this->push_back(action);
+                return *this;
+            }
+
+            Action& operator[](const size_type _pos)
+            {
+                if (this->size() < _pos + 1) {
+                    this->resize(_pos + 1);
+                }
+                return std::vector<Action>::operator[](_pos);
+            }
+        };
 
         struct Condition
         {
             MessageType type_;
             MethodId id_;
             void* func_ptr_ = nullptr;
+        };
+
+        class ConditionVector : public std::vector<Condition> {
+        public:
+            ConditionVector() = default;
+            ~ConditionVector() = default;
+
+            ConditionVector& operator +(const Condition& _cond)
+            {
+                this->push_back(_cond);
+                return *this;
+            }
+
+            Condition& operator[](const std::size_t _pos)
+            {
+                if (this->size() < _pos + 1) {
+                    this->resize(_pos + 1);
+                }
+                return std::vector<Condition>::operator[](_pos);
+            };
         };
 
         class BaseState {
@@ -56,8 +94,8 @@ namespace helper {
             virtual ~BaseState() {}
         public:
             const std::string& GetId() const { return id; }
-            std::map<uint32_t, Action> onentry;
-            std::map<uint32_t, Action> onexit;
+            ActionVector onentry;
+            ActionVector onexit;
         private:
             std::string id;
             class BaseState* parent = nullptr;
@@ -94,7 +132,7 @@ namespace helper {
                 return children[keyval];
             }
         public:
-            std::map<uint32_t, Condition> cond;
+            ConditionVector cond;
             std::map<std::string, State> children;
             std::map<std::string, Parallel> parallel;
             friend class StateMachine;
@@ -169,6 +207,14 @@ namespace helper {
 
         virtual bool Transition(const std::string& target) final {
             return Transition(GetState(target));
+        }
+
+        bool IsRoot() {
+            return this->current_state_ == &this->root;
+        }
+
+        bool IsFinal() {
+            return this->current_state_ == &this->final;
         }
 
     protected:
@@ -397,16 +443,16 @@ namespace helper {
 
         void processOnEntry(const BaseState* entry_state) {
             for (const auto& action : entry_state->onentry) {
-                if (action.second) {
-                    action.second();
+                if (action) {
+                    action();
                 }
             }
         }
 
         void processOnExit(BaseState* leave_state) {
             for (const auto& action : leave_state->onexit) {
-                if (action.second) {
-                    action.second();
+                if (action) {
+                    action();
                 }
             }
         }
@@ -415,14 +461,14 @@ namespace helper {
             auto state = dynamic_cast<State*>(filterState);
             if (state) {
                 for (const auto& c : state->cond) {
-                    if ((task_data->type_ == c.second.type_) && (task_data->id_ == c.second.id_)) {
+                    if ((task_data->type_ == c.type_) && (task_data->id_ == c.id_)) {
                         //processCondtion
-                        task_data->task_(dynamic_cast<C*>(this), c.second.func_ptr_, false);
+                        task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, false);
                         return true;
                     }
-                    else if ((task_data->type_ == c.second.type_) && (c.second.id_ == (MethodId)-1)) {
+                    else if ((task_data->type_ == c.type_) && (c.id_ == (MethodId)-1)) {
                         //processCondtion
-                        task_data->task_(dynamic_cast<C*>(this), c.second.func_ptr_, true);
+                        task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, true);
                         return true;
                     }
                 }
