@@ -45,95 +45,97 @@ typedef void(*Response_Response1FuncType)(class StateMachineTest *, const Locati
 class StateMachineTest : public StateMachine<StateMachineTest, MethodId> {
 public:
     StateMachineTest(const std::string& name) :StateMachine(name) {
+        this->root.onentry[0]=([this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; });
+        this->root.onexit[0]=([this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; });
 
-        this->Root().AddOnEntry([this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; });
-        this->Root().AddOnExit([this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; });
-
-        this->Root().AddCond({
+        this->root.cond[0]={
             MessageType::REQUEST, MethodId::getValue, (void*)(getValueFuncType)[](StateMachineTest* pThis, const Location& loc) {
                 auto ret = pThis->getValue();
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to children state children1" << std::endl;
                 pThis->Transition("children1");
                 return ret;
             }
-            });
+        };
 
-        this->Root().AddCond({
+        this->root.cond[1]={
             MessageType::EVENT, MethodId::Event_Event1, (void*)(Event_Event1FuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t code , const std::string& msg)->void {
                     pThis->Event1(code , msg);
                     std::cout << __FILE__ << ":" << __LINE__ << " Transition to children state children2-1" << std::endl;
                     pThis->Transition("children2-1");
                     return;
             }
-            });
+        };
 
-        this->Root().AddCond({
+        this->root.cond[2] = {
             MessageType::EVENT, MethodId::Event_Final, (void*)(Event_FinalFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to final " << msg << std::endl;
                 pThis->TransitionFinal();
                 return;
             }
-            });
-        this->Root().AddCond({
+        };
+        this->root.cond[3] ={
             MessageType::EVENT, MethodId::Event_Event2, (void*)(Event_FinalFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to init " << msg << std::endl;
                 pThis->TransitionRoot();
                 return;
             }
-            });
-        this->Root().AddCond({
+        };
+        this->root.cond[4] = {
             MessageType::EVENT, MethodId::Event_Parallel2, (void*)(Event_ParallelFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to parallel-1-1 " << msg << std::endl;
                 pThis->Transition("parallel-1-1");
                 return;
             }
-            });
-        this->Root().AddCond({
+        };
+        this->root.cond[5] = {
             MessageType::EVENT, MethodId::anyFunction, (void*)(Event_Any)[](StateMachineTest* pThis, const Location& loc)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " anyFunction " << std::endl;
                 return;
             }
-            });
+        };
 
-        this->Root()["children1"].AddOnEntry([this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; });
-        this->Root()["children1"].AddOnExit([this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; });
-        this->Root()["children1"].AddCond({
+        this->root["children1"].onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
+        this->root["children1"].onexit[0] = [this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; };
+        this->root["children1"].cond[0] = {
                   MessageType::REQUEST, MethodId::getStructValue, (void*)(getStructValueFuncType)[](StateMachineTest* pThis, const Location& loc) {
                       auto ret = pThis->getStructValue();
                       std::cout << __FILE__ << ":" << __LINE__ << " Transition to Brother State children2" << std::endl;
                       pThis->Transition("children2");
                       return ret;
-                  } });
+                  }
+        };
 
-        this->Root()["children1"].AddCond({
+        this->root["children1"].cond[1] = {
             MessageType::REQUEST, MethodId::modifyReference, (void*)(modifyReferenceFuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t& refVal) {
                       auto ret = pThis->modifyReference(refVal);
                       std::cout << __FILE__ << ":" << __LINE__ << " Transition to current state children1" << std::endl;
                       pThis->Transition("children1");
                       return ret;
-                  } });
-        this->Root()["children1"].AddCond({
+                  } 
+        };
+        this->root["children1"].cond[2] ={
             MessageType::REQUEST, MethodId::Rightvalue, (void*)(RightvalueFuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t&& rVal)->void {
                       pThis->Rightvalue(std::forward<uint32_t>(rVal));
                       std::cout << __FILE__ << ":" << __LINE__ << " Transition to parent state init" << std::endl;
                       pThis->TransitionRoot();
                       return;
-                  } });
+                  }
+        };
 
-        this->Root()["children1"]["children1-1"].AddOnEntry([this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; });
-        this->Root()["children1"]["children1-1"].AddOnExit([this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; });
+        this->root["children1"]["children1-1"].onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
+        this->root["children1"]["children1-1"].onexit[0] = [this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; };
 
 
-        this->Root()["children2"].AddOnEntry([this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; });
-        this->Root()["children2"].AddCond({
+        this->root["children2"].onentry[0] =[this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
+        this->root["children2"].cond[0] = {
             MessageType::RESPONSE, MethodId::Response_Response1, (void*)(Response_Response1FuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t code , std::string  msg,std::string  msg2, void* user_data)->void
                 {
                     pThis->Response1(code, msg, msg2);
                     std::cout << __FILE__ << ":" << __LINE__ << " Transition to branch state of sibling state children1-1" << std::endl;
                     pThis->Transition("children1-1");
                 }
-            });
-        this->Root()["children2"].AddCond({
+        };
+        this->root["children2"].cond[1] = {
             MessageType::REQUEST, MethodId::modifyPtrValue, (void*)(modifyPtrValueFuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t* ptrVal)
                 {
                     auto ret = pThis->modifyPtrValue(ptrVal);
@@ -141,43 +143,45 @@ public:
                     pThis->Transition("children1");
                     return ret;
                 }
-            });
-        this->Root()["children2"].AddCond({
+        };
+        this->root["children2"].cond[2] = {
             MessageType::EVENT, MethodId::Event_Parallel, (void*)(Event_ParallelFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to parallel " << msg << std::endl;
                 pThis->Transition("parallel");
                 return;
-            } });
+            }
+        };
 
-        this->Root()["children2"].AddOnExit([this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; });
+        this->root["children2"].onexit[0] = [this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; };
 
-        this->Root()["children2"]["children2-1"].AddOnEntry([this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; });
-        this->Root()["children2"]["children2-1"].AddOnExit([this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; });
+        this->root["children2"]["children2-1"].onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
+        this->root["children2"]["children2-1"].onexit[0] = [this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; };
 
-        this->Root().Parallel("parallel")["parallel-1"].AddOnEntry([this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; });
-        this->Root().Parallel("parallel")["parallel-1"].AddOnExit([this]() {std::cout << " onexit " << this->GetCurStateId() << std::endl; });
+        this->root.parallel["parallel"]["parallel-1"].onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
+        this->root.parallel["parallel"]["parallel-1"].onexit[0] = [this]() {std::cout << " onexit " << this->GetCurStateId() << std::endl; };
 
-        this->Root().Parallel("parallel")["parallel-1"]["parallel-1-1"].AddOnEntry([this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; });
-        this->Root().Parallel("parallel")["parallel-1"]["parallel-1-1"].AddOnExit([this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; });
+        this->root.parallel["parallel"]["parallel-1"]["parallel-1-1"].onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
+        this->root.parallel["parallel"]["parallel-1"]["parallel-1-1"].onexit[0] = [this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; };
 
-        this->Root().Parallel("parallel")["parallel-1"]["parallel-1-1"].AddCond({
+        this->root.parallel["parallel"]["parallel-1"]["parallel-1-1"].cond[0]={
             MessageType::EVENT, MethodId::Event_Event2, (void*)(Event_EventFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
               std::cout << __FILE__ << ":" << __LINE__ << " Transition to init " << msg << std::endl;
               pThis->TransitionRoot();
               return;
-            } });
+            }
+        };
 
-        this->Root().Parallel("parallel")["parallel-2"].AddOnEntry([this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; });
-        this->Root().Parallel("parallel")["parallel-2"].AddOnExit([this]() {std::cout << " onexit " << this->GetCurStateId() << std::endl; });
-        this->Root().Parallel("parallel")["parallel-2"].AddCond({
+        this->root.parallel["parallel"]["parallel-2"].onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
+        this->root.parallel["parallel"]["parallel-2"].onexit[0] = [this]() {std::cout << " onexit " << this->GetCurStateId() << std::endl; };
+        this->root.parallel["parallel"]["parallel-2"].cond[0] ={
             MessageType::EVENT, MethodId::Event_Event3, (void*)(Event_EventFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
               std::cout << __FILE__ << ":" << __LINE__ << " Transition to init " << msg << std::endl;
               pThis->TransitionRoot();
               return;
-            } }
-        );
+            }
+        };
 
-        this->Final().AddOnEntry([this]() {std::cout << " onentry " << this->GetCurStateId() << " final" << std::endl; });
+        this->final.onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << " final" << std::endl; };
     }
 
     virtual ~StateMachineTest() {

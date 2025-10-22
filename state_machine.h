@@ -44,29 +44,23 @@ namespace helper {
 
         struct Condition
         {
-            MessageType type_ = 0;
-            MethodId id_ = 0;
+            MessageType type_;
+            MethodId id_;
             void* func_ptr_ = nullptr;
         };
 
         class BaseState {
         public:
-            BaseState(const std::string& id) :id_(id) {}
+            BaseState(const std::string& id_) :id(id_) {}
             BaseState() {}
             virtual ~BaseState() {}
         public:
-            const std::string& GetId() const { return id_; }
-            void AddOnEntry(const Action&& action) {
-                this->onentry_.push_back(std::move(action));
-            }
-            void AddOnExit(const Action&& action) {
-                this->onexit_.push_back(std::move(action));
-            }
+            const std::string& GetId() const { return id; }
+            std::map<uint32_t, Action> onentry;
+            std::map<uint32_t, Action> onexit;
         private:
-            std::string id_;
-            std::vector<Action> onentry_;
-            std::vector<Action> onexit_;
-            class BaseState* parent_ = nullptr;
+            std::string id;
+            class BaseState* parent = nullptr;
             bool active_ = false;
             friend class StateMachine;
         };
@@ -78,37 +72,31 @@ namespace helper {
         };
 
 
-        class Parallel : public BaseState {
-        public:
-            Parallel() {}
-            class State& operator[](const std::string& keyval) {
-                return children_[keyval];
-            }
-        private:
-            std::map<std::string, class State> children_;
-            friend class StateMachine;
-        };
 
         class State : public BaseState {
+        public:
+            class Parallel : public BaseState {
+            public:
+                Parallel() {}
+                State& operator[](const std::string& keyval) {
+                    return children_[keyval];
+                }
+                std::map<std::string, State> children_;
+            private:
 
+                friend class StateMachine;
+            };
         public:
             State(const std::string& id)
                 :BaseState(id) {}
             State() {}
             State& operator[](const std::string& keyval) {
-                return children_[keyval];
+                return children[keyval];
             }
-            void AddCond(const Condition&& cond) {
-                this->cond_.push_back(std::move(cond));
-            }
-
-            class Parallel& Parallel(const std::string& keyval) {
-                return this->parallel_[keyval];
-            }
-        private:
-            std::vector<Condition> cond_;
-            std::map<std::string, State> children_;
-            std::map<std::string, class Parallel> parallel_;
+        public:
+            std::map<uint32_t, Condition> cond;
+            std::map<std::string, State> children;
+            std::map<std::string, Parallel> parallel;
             friend class StateMachine;
         };
 
@@ -172,28 +160,20 @@ namespace helper {
         }
 
         virtual bool TransitionRoot()final {
-            return Transition(&this->root_state_);
+            return Transition(&this->root);
         }
 
         virtual bool TransitionFinal()final {
-            return Transition(&this->final_);
+            return Transition(&this->final);
         }
 
         virtual bool Transition(const std::string& target) final {
             return Transition(GetState(target));
         }
 
-        virtual State& Root() final {
-            return this->root_state_;
-        }
-
-        virtual Final &Final()final {
-            return this->final_;
-        }
-
     protected:
-        class State root_state_;
-        class Final final_;
+        State root;
+        Final final;
     private:
         BaseState* current_state_ = nullptr;
         std::map<std::string, BaseState*> stateId_map_;
@@ -253,31 +233,32 @@ namespace helper {
 
         //解析状态机结构
         void ParseState(BaseState* baseState, BaseState* parent) {
-            baseState->parent_ = parent;
+            baseState->parent = parent;
             stateId_map_[baseState->GetId()] = baseState;
             State* state = dynamic_cast<State*>(baseState);
             if (state) {
-                for (auto& parallel : state->parallel_) {
-                    parallel.second.id_ = parallel.first;
+                for (auto& parallel : state->parallel) {
+                    parallel.second.id = parallel.first;
                     ParseState(&parallel.second, baseState);
                 }
 
-                for (auto& child : state->children_) {
-                    child.second.id_ = child.first;
+                for (auto& child : state->children) {
+                    child.second.id = child.first;
                     ParseState(&child.second, baseState);
                 }
             }
 
-            auto parallel = dynamic_cast<class Parallel*>(baseState);
+            auto parallel = dynamic_cast<typename State::Parallel*>(baseState);
             if (parallel) {
                 for (auto& child : parallel->children_) {
-                    child.second.id_ = child.first;
+                    child.second.id = child.first;
                     ParseState(&child.second, baseState);
                 }
             }
+
         }
 
-        bool Transition(BaseState* target_state) {
+        virtual bool Transition(BaseState* target_state) final {
 
             if (target_state)
             {
@@ -295,8 +276,8 @@ namespace helper {
                     auto current_state_path = this->current_state_;
                     current_state_path_list.push_front(current_state_path);
                     while (current_state_path) {
-                        current_state_path_list.push_front(current_state_path->parent_);
-                        current_state_path = current_state_path->parent_;
+                        current_state_path_list.push_front(current_state_path->parent);
+                        current_state_path = current_state_path->parent;
                     }
                 }
 
@@ -306,8 +287,8 @@ namespace helper {
                     auto target_state_path = target_state;
                     target_state_path_list.push_front(target_state_path);
                     while (target_state_path) {
-                        target_state_path_list.push_front(target_state_path->parent_);
-                        target_state_path = target_state_path->parent_;
+                        target_state_path_list.push_front(target_state_path->parent);
+                        target_state_path = target_state_path->parent;
                     }
                 }
 
@@ -359,13 +340,13 @@ namespace helper {
                 return state;
             }
             else {
-                for (auto& child : state->children_) {
+                for (auto& child : state->children) {
                     auto active_ = findActiveState(&child.second);
                     if (active_) {
                         return active_;
                     }
                 }
-                for (auto& parallel : state->parallel_) {
+                for (auto& parallel : state->parallel) {
                     if (parallel.second.active_ == true) {
                         return &parallel.second;
                     }
@@ -375,13 +356,13 @@ namespace helper {
         }
 
         void processExit(BaseState* leave) {
-            auto* parallel = dynamic_cast<class Parallel*>(leave);
+            auto* parallel = dynamic_cast<typename State::Parallel*>(leave);
             if (parallel) {//是parallel状态，离开所有子状态
                 for (auto& child : parallel->children_) {
                     BaseState* active_state = findActiveState(&child.second);
                     while (active_state != nullptr && active_state != parallel) {
                         processExit(active_state);
-                        active_state = active_state->parent_;
+                        active_state = active_state->parent;
                     }
                 }
             }
@@ -392,8 +373,8 @@ namespace helper {
 
         void processEntry(BaseState* entry) {
 
-            if (dynamic_cast<State*>(entry->parent_)) {//如果父状态不是parallel是State，设置为非活跃
-                entry->parent_->active_ = false;
+            if (dynamic_cast<State*>(entry->parent)) {//如果父状态不是parallel是State，设置为非活跃
+                entry->parent->active_ = false;
             }
 
             if (entry->active_ == true) { //parallel 状态子状态已经进入过，不需要重新进入
@@ -404,7 +385,7 @@ namespace helper {
             this->current_state_->active_ = true;
             processOnEntry(this->current_state_);
 
-            auto* parallel = dynamic_cast<class Parallel*>(entry);
+            auto* parallel = dynamic_cast<typename State::Parallel*>(entry);
             if (parallel) {//是parallel状态，进入所有子状态
                 for (auto& child : parallel->children_) {
                     this->current_state_ = &child.second;
@@ -415,17 +396,17 @@ namespace helper {
         }
 
         void processOnEntry(const BaseState* entry_state) {
-            for (const auto& action : entry_state->onentry_) {
-                if (action) {
-                    action();
+            for (const auto& action : entry_state->onentry) {
+                if (action.second) {
+                    action.second();
                 }
             }
         }
 
         void processOnExit(BaseState* leave_state) {
-            for (const auto& action : leave_state->onexit_) {
-                if (action) {
-                    action();
+            for (const auto& action : leave_state->onexit) {
+                if (action.second) {
+                    action.second();
                 }
             }
         }
@@ -433,21 +414,21 @@ namespace helper {
         bool processTask(BaseState* filterState, std::shared_ptr<MethodCallData> task_data) {
             auto state = dynamic_cast<State*>(filterState);
             if (state) {
-                for (const auto& c : state->cond_) {
-                    if ((task_data->type_ == c.type_) && (task_data->id_ == c.id_)) {
+                for (const auto& c : state->cond) {
+                    if ((task_data->type_ == c.second.type_) && (task_data->id_ == c.second.id_)) {
                         //processCondtion
-                        task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, false);
+                        task_data->task_(dynamic_cast<C*>(this), c.second.func_ptr_, false);
                         return true;
                     }
-                    else if ((task_data->type_ == c.type_) && (c.id_ == (MethodId)-1)) {
+                    else if ((task_data->type_ == c.second.type_) && (c.second.id_ == (MethodId)-1)) {
                         //processCondtion
-                        task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, true);
+                        task_data->task_(dynamic_cast<C*>(this), c.second.func_ptr_, true);
                         return true;
                     }
                 }
             }
 
-            auto parallel = dynamic_cast<class Parallel*>(filterState);
+            auto parallel = dynamic_cast<typename State::Parallel*>(filterState);
             if (parallel) {//是parallel状态，匹配所有子分支
                 for (auto& child : parallel->children_) {
                     auto filter_Parallel = findActiveState(&child.second);
@@ -456,7 +437,7 @@ namespace helper {
                             return true;
                         }
                         else {
-                            filter_Parallel = filter_Parallel->parent_;
+                            filter_Parallel = filter_Parallel->parent;
                         }
                     }
                 }
@@ -467,8 +448,8 @@ namespace helper {
 
         void Run() {
             helper::SetCurrentThreadName(this->name_.c_str());
-            this->ParseState(&this->root_state_, nullptr);
-            this->current_state_ = &this->root_state_;
+            this->ParseState(&this->root, nullptr);
+            this->current_state_ = &this->root;
             /*
                 在自己线程调用Stop时，不能等待线程结束，
                 在执行完 task 后，this对象已经释放，thread_is_run_ 变的不可访问。
@@ -485,7 +466,7 @@ namespace helper {
                         foundMsg = processTask(filterState, task_data);
                         if (!foundMsg)
                         {
-                            filterState = filterState->parent_;
+                            filterState = filterState->parent;
                         }
                     }
                 }
