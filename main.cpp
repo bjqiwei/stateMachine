@@ -30,17 +30,17 @@ struct StateMachineStruct{
 
 
 
-typedef uint32_t(*getValueFuncType)(class StateMachineTest *, const Location & loc);
-typedef StateMachineStruct(*getStructValueFuncType)(class StateMachineTest *, const Location & loc);
-typedef bool (*modifyPtrValueFuncType)(class StateMachineTest *, const Location & loc, uint32_t * val);
-typedef bool(*modifyReferenceFuncType)(class StateMachineTest *, const Location & loc, uint32_t & val);
-typedef void(*RightvalueFuncType)(class StateMachineTest *, const Location & loc, uint32_t && rVal);
-typedef void(*Event_Event1FuncType)(class StateMachineTest *, const Location & loc, uint32_t code , const std::string & msg);
-typedef void(*Event_EventFuncType)(class StateMachineTest*, const Location& loc, const std::string& msg);
-typedef void(*Event_FinalFuncType)(class StateMachineTest*, const Location& loc, const std::string& msg);
-typedef void(*Event_ParallelFuncType)(class StateMachineTest*, const Location& loc, const std::string& msg);
-typedef void(*Event_Any)(class StateMachineTest*, const Location& loc);
-typedef void(*Response_Response1FuncType)(class StateMachineTest *, const Location & loc, uint32_t code, std::string msg, std::string  msg2, void * user_data);
+using getValueFuncType =std::function<uint32_t(const Location & loc)>;
+using getStructValueFuncType =std::function <StateMachineStruct(const Location & loc)>;
+using modifyPtrValueFuncType = std::function< bool(const Location & loc, uint32_t * val)>;
+using modifyReferenceFuncType = std::function<bool(const Location & loc, uint32_t & val)>;
+using RightvalueFuncType = std::function<void(const Location & loc, uint32_t && rVal)>;
+using Event_Event1FuncType = std::function<void(const Location & loc, uint32_t code , const std::string & msg)>;
+using Event_EventFuncType = std::function<void(const Location& loc, const std::string& msg)>;
+using Event_FinalFuncType = std::function<void(const Location& loc, const std::string& msg)>;
+using Event_ParallelFuncType = std::function<void(const Location& loc, const std::string& msg)>;
+using Event_Any = std::function <void(const Location& loc)>;
+using Response_Response1FuncType = std::function<void(const Location & loc, uint32_t code, std::string msg, std::string  msg2, void * user_data)>;
 
 class StateMachineTest : public StateMachine<StateMachineTest, MethodId> {
 public:
@@ -49,46 +49,46 @@ public:
         this->root.onexit[0]=([this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; });
 
         this->root.cond[0]={
-            MessageType::REQUEST, MethodId::getValue, (void*)(getValueFuncType)[](StateMachineTest* pThis, const Location& loc) {
-                auto ret = pThis->getValue();
+            MessageType::REQUEST, MethodId::getValue, (getValueFuncType)[this](const Location& loc) {
+                auto ret = this->getValue();
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to children state children1" << std::endl;
-                pThis->Transition("children1");
+                this->Transition("children1");
                 return ret;
             }
         };
 
         this->root.cond[1]={
-            MessageType::EVENT, MethodId::Event_Event1, (void*)(Event_Event1FuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t code , const std::string& msg)->void {
-                    pThis->Event1(code , msg);
+            MessageType::EVENT, MethodId::Event_Event1, (Event_Event1FuncType)[this](const Location& loc, uint32_t code , const std::string& msg)->void {
+					this->Event1(code , msg);
                     std::cout << __FILE__ << ":" << __LINE__ << " Transition to children state children2-1" << std::endl;
-                    pThis->Transition("children2-1");
+					this->Transition("children2-1");
                     return;
             }
         };
 
         this->root.cond[2] = {
-            MessageType::EVENT, MethodId::Event_Final, (void*)(Event_FinalFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
+            MessageType::EVENT, MethodId::Event_Final, (Event_FinalFuncType)[this](const Location& loc, const std::string& msg)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to final " << msg << std::endl;
-                pThis->TransitionFinal();
+				this->TransitionFinal();
                 return;
             }
         };
         this->root.cond[3] ={
-            MessageType::EVENT, MethodId::Event_Event2, (void*)(Event_FinalFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
+            MessageType::EVENT, MethodId::Event_Event2, (Event_FinalFuncType)[this](const Location& loc, const std::string& msg)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to init " << msg << std::endl;
-                pThis->TransitionRoot();
+				this->TransitionRoot();
                 return;
             }
         };
         this->root.cond[4] = {
-            MessageType::EVENT, MethodId::Event_Parallel2, (void*)(Event_ParallelFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
+            MessageType::EVENT, MethodId::Event_Parallel2, (Event_ParallelFuncType)[this](const Location& loc, const std::string& msg)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to parallel-1-1 " << msg << std::endl;
-                pThis->Transition("parallel-1-1");
+				this->Transition("parallel-1-1");
                 return;
             }
         };
         this->root.cond[5] = {
-            MessageType::EVENT, MethodId::anyFunction, (void*)(Event_Any)[](StateMachineTest* pThis, const Location& loc)->void {
+            MessageType::EVENT, MethodId::anyFunction, (Event_Any)[this](const Location& loc)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " anyFunction " << std::endl;
                 return;
             }
@@ -97,27 +97,27 @@ public:
         this->root["children1"].onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
         this->root["children1"].onexit[0] = [this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; };
         this->root["children1"].cond[0] = {
-                  MessageType::REQUEST, MethodId::getStructValue, (void*)(getStructValueFuncType)[](StateMachineTest* pThis, const Location& loc) {
-                      auto ret = pThis->getStructValue();
+                  MessageType::REQUEST, MethodId::getStructValue, [this](const Location& loc) {
+                      auto ret = this->getStructValue();
                       std::cout << __FILE__ << ":" << __LINE__ << " Transition to Brother State children2" << std::endl;
-                      pThis->Transition("children2");
+                      this->Transition("children2");
                       return ret;
                   }
         };
 
         this->root["children1"].cond[1] = {
-            MessageType::REQUEST, MethodId::modifyReference, (void*)(modifyReferenceFuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t& refVal) {
-                      auto ret = pThis->modifyReference(refVal);
+            MessageType::REQUEST, MethodId::modifyReference, (modifyReferenceFuncType)[this](const Location& loc, uint32_t& refVal) {
+                      auto ret = this->modifyReference(refVal);
                       std::cout << __FILE__ << ":" << __LINE__ << " Transition to current state children1" << std::endl;
-                      pThis->Transition("children1");
+					  this->Transition("children1");
                       return ret;
                   } 
         };
         this->root["children1"].cond[2] ={
-            MessageType::REQUEST, MethodId::Rightvalue, (void*)(RightvalueFuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t&& rVal)->void {
-                      pThis->Rightvalue(std::forward<uint32_t>(rVal));
+            MessageType::REQUEST, MethodId::Rightvalue, (RightvalueFuncType)[this](const Location& loc, uint32_t&& rVal)->void {
+					  this->Rightvalue(std::forward<uint32_t>(rVal));
                       std::cout << __FILE__ << ":" << __LINE__ << " Transition to parent state init" << std::endl;
-                      pThis->TransitionRoot();
+					  this->TransitionRoot();
                       return;
                   }
         };
@@ -128,26 +128,26 @@ public:
 
         this->root["children2"].onentry[0] =[this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
         this->root["children2"].cond[0] = {
-            MessageType::RESPONSE, MethodId::Response_Response1, (void*)(Response_Response1FuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t code , std::string  msg,std::string  msg2, void* user_data)->void
+            MessageType::RESPONSE, MethodId::Response_Response1, (Response_Response1FuncType)[this](const Location& loc, uint32_t code , std::string  msg,std::string  msg2, void* user_data)->void
                 {
-                    pThis->Response1(code, msg, msg2);
+					this->Response1(code, msg, msg2);
                     std::cout << __FILE__ << ":" << __LINE__ << " Transition to branch state of sibling state children1-1" << std::endl;
-                    pThis->Transition("children1-1");
+					this->Transition("children1-1");
                 }
         };
         this->root["children2"].cond[1] = {
-            MessageType::REQUEST, MethodId::modifyPtrValue, (void*)(modifyPtrValueFuncType)[](StateMachineTest* pThis, const Location& loc, uint32_t* ptrVal)
+            MessageType::REQUEST, MethodId::modifyPtrValue, (modifyPtrValueFuncType)[this](const Location& loc, uint32_t* ptrVal)
                 {
-                    auto ret = pThis->modifyPtrValue(ptrVal);
+                    auto ret = this->modifyPtrValue(ptrVal);
                     std::cout << __FILE__ << ":" << __LINE__ << " Transition to Brother State children1" << std::endl;
-                    pThis->Transition("children1");
+					this->Transition("children1");
                     return ret;
                 }
         };
         this->root["children2"].cond[2] = {
-            MessageType::EVENT, MethodId::Event_Parallel, (void*)(Event_ParallelFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
+            MessageType::EVENT, MethodId::Event_Parallel, (Event_ParallelFuncType)[this](const Location& loc, const std::string& msg)->void {
                 std::cout << __FILE__ << ":" << __LINE__ << " Transition to parallel " << msg << std::endl;
-                pThis->Transition("parallel");
+				this->Transition("parallel");
                 return;
             }
         };
@@ -164,9 +164,9 @@ public:
         this->root.parallel["parallel"]["parallel-1"]["parallel-1-1"].onexit[0] = [this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; };
 
         this->root.parallel["parallel"]["parallel-1"]["parallel-1-1"].cond[0]={
-            MessageType::EVENT, MethodId::Event_Event2, (void*)(Event_EventFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
+            MessageType::EVENT, MethodId::Event_Event2, (Event_EventFuncType)[this](const Location& loc, const std::string& msg)->void {
               std::cout << __FILE__ << ":" << __LINE__ << " Transition to init " << msg << std::endl;
-              pThis->TransitionRoot();
+			  this->TransitionRoot();
               return;
             }
         };
@@ -174,9 +174,9 @@ public:
         this->root.parallel["parallel"]["parallel-2"].onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
         this->root.parallel["parallel"]["parallel-2"].onexit[0] = [this]() {std::cout << " onexit " << this->GetCurStateId() << std::endl; };
         this->root.parallel["parallel"]["parallel-2"].cond[0] ={
-            MessageType::EVENT, MethodId::Event_Event3, (void*)(Event_EventFuncType)[](StateMachineTest* pThis, const Location& loc, const std::string& msg)->void {
+            MessageType::EVENT, MethodId::Event_Event3, (Event_EventFuncType)[this](const Location& loc, const std::string& msg)->void {
               std::cout << __FILE__ << ":" << __LINE__ << " Transition to init " << msg << std::endl;
-              pThis->TransitionRoot();
+			  this->TransitionRoot();
               return;
             }
         };
@@ -240,27 +240,27 @@ int main()
     stateMachine.Start();
 
     {
-        auto ret = stateMachine.AddRequetTask<getValueFuncType>(HELPER_FROM_HERE, MethodId::getValue);
+        auto ret = stateMachine.AddRequetTask<getValueFuncType::result_type, getValueFuncType>(HELPER_FROM_HERE, MethodId::getValue);
         std::cout << "getValue return :" << ret << std::endl;
     }
 
     {
         std::cout << std::endl << std::endl << std::endl;
-        auto ret = stateMachine.AddRequetTask<getStructValueFuncType>(HELPER_FROM_HERE, MethodId::getStructValue);
+        auto ret = stateMachine.AddRequetTask<getStructValueFuncType::result_type, getStructValueFuncType>(HELPER_FROM_HERE, MethodId::getStructValue);
         std::cout << "getStructValue return :{" << ret.name << "," << ret.id << "}" << std::endl;
     }
   
     {
         std::cout << std::endl << std::endl << std::endl;
         uint32_t val = 0;
-        auto ret = stateMachine.AddRequetTask<modifyPtrValueFuncType>(HELPER_FROM_HERE, MethodId::modifyPtrValue, &val);
+        auto ret = stateMachine.AddRequetTask<modifyPtrValueFuncType::result_type, modifyPtrValueFuncType>(HELPER_FROM_HERE, MethodId::modifyPtrValue, &val);
         std::cout << "modifyPtrValue  :" << val << std::endl;
     }
 
     {
         std::cout << std::endl << std::endl << std::endl;
         uint32_t val = 0;
-        auto ret = stateMachine.AddRequetTask<modifyReferenceFuncType>(HELPER_FROM_HERE, MethodId::modifyReference, val);
+        auto ret = stateMachine.AddRequetTask<modifyReferenceFuncType::result_type, modifyReferenceFuncType>(HELPER_FROM_HERE, MethodId::modifyReference, val);
         std::cout << "modifyReference " << ":" << val << std::endl;
     }
 
@@ -268,7 +268,7 @@ int main()
         std::cout << std::endl << std::endl << std::endl;
         uint32_t val = 2;
         std::cout << "Rightvalue address:" << &val << std::endl;
-         stateMachine.AddRequetTask<RightvalueFuncType>(HELPER_FROM_HERE, MethodId::Rightvalue, std::move(val));
+         stateMachine.AddRequetTask<RightvalueFuncType::result_type, RightvalueFuncType>(HELPER_FROM_HERE, MethodId::Rightvalue, std::move(val));
     }
 
     {

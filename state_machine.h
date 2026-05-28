@@ -4,6 +4,7 @@
 #include <string>
 #include <thread>
 #include <future>
+#include <any>
 #include <map>
 #include <list>
 #include <algorithm>
@@ -25,7 +26,7 @@ namespace helper {
             EVENT,
         };
     public:
-        using Task = std::function<void(C* class_, void* method, bool general)>;
+        using Task = std::function<void(std::any method, bool general)>;
 
         class MethodCallData {
         public:
@@ -64,7 +65,7 @@ namespace helper {
         {
             MessageType type_;
             MethodId id_;
-            void* func_ptr_ = nullptr;
+            std::any func_ptr_ = nullptr;
         };
 
         class ConditionVector : public std::vector<Condition> {
@@ -176,10 +177,10 @@ namespace helper {
             return thread_run_.get_id();
         }
 
-        template<typename Method, typename... Args>
+        template<typename RetType, typename Method, typename... Args>
         auto AddRequetTask(Location&& loc, MethodId&& id, Args&&... args)
         {
-            auto future = AddTask<Method, Args...>(std::forward<Location>(loc), MessageType::REQUEST, std::forward<MethodId>(id), std::forward<Args>(args)...);
+            auto future = AddTask<RetType, Method, Args...>(std::forward<Location>(loc), MessageType::REQUEST, std::forward<MethodId>(id), std::forward<Args>(args)...);
             return future.get();
         }
 
@@ -229,26 +230,25 @@ namespace helper {
         std::string name_; //状态机名称，也用作线程名称
     private:
         //添加任务，packaged_task 中返回的future，不调用get()不会阻塞
-        template<typename Method, typename... Args>
+        template<typename RetType, typename Method, typename... Args>
         auto AddTask(Location&& loc, MessageType&& type, MethodId&& id, Args&&... args)
         {
-
-            using RetType = decltype(((Method)nullptr)(nullptr, loc, std::forward<Args>(args)...)); //推导返回值类型
+            // RetType = Method::result_type; //推导返回值类型
             auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
 
-            typedef RetType(*GeneralMethod)(C* class_, const Location& loc);
-            auto func = [&loc, &args...](C* class_, void* method_, bool general) {
+            using GeneralMethod = std::function<RetType(const Location& loc)>;
+            auto func = [&loc, &args...](std::any method_, bool general) {
                 if (general)
-                    return ((GeneralMethod)(method_))(class_, loc);
+                    return (std::any_cast<GeneralMethod>(method_))(loc);
                 else
-                    return ((Method)(method_))(class_, loc, std::forward<Args>(args)...);
+                    return (std::any_cast<Method>(method_))(loc, std::forward<Args>(args)...);
             };
 
             //在这里使用统一的packpaged类型
-            auto taskPack = std::make_shared<std::packaged_task<RetType(C* class_, void* method_, bool general)>>(func);
+            auto taskPack = std::make_shared<std::packaged_task<RetType(std::any method_, bool general)>>(func);
 
             std::future<RetType> futureRet = taskPack->get_future();
-            task_data->task_ = [taskPack](C* class_, void* method_, bool general)->void { (*taskPack)(class_, method_, general); };
+            task_data->task_ = [taskPack](std::any method_, bool general)->void { (*taskPack)(method_, general); };
             task_queue_.Put(task_data);
 
             return futureRet;
@@ -259,19 +259,19 @@ namespace helper {
         {
             auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
 
-            typedef void(*GeneralMethod)(C* class_, const Location& loc);
+            using GeneralMethod = std::function<void(const Location& loc)>;
             //参数使用临时变量
-            auto func = [loc, args...](C* class_, void* method_, bool general)->void {
+            auto func = [loc, args...](std::any method_, bool general)->void {
                 if (general)
-                    return ((GeneralMethod)(method_))(class_, loc);
+                    return (std::any_cast<GeneralMethod>(method_))(loc);
                 else
-                    return ((Method)(method_))(class_, loc, std::move(args)...);
+                    return (std::any_cast<Method>(method_))(loc, std::move(args)...);
             };
 
             //在这里使用统一的packpaged类型
-            auto taskPack = std::make_shared<std::packaged_task<void(C* class_, void* method_, bool general)>>(func);
+            auto taskPack = std::make_shared<std::packaged_task<void(std::any method_, bool general)>>(func);
 
-            task_data->task_ = [taskPack](C* class_, void* method_, bool general)->void { (*taskPack)(class_, method_, general); };
+            task_data->task_ = [taskPack](std::any method_, bool general)->void { (*taskPack)(method_, general); };
             task_queue_.Put(task_data);
             return;
 
@@ -463,12 +463,12 @@ namespace helper {
                 for (const auto& c : state->cond) {
                     if ((task_data->type_ == c.type_) && (task_data->id_ == c.id_)) {
                         //processCondtion
-                        task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, false);
+                        task_data->task_(c.func_ptr_, false);
                         return true;
                     }
                     else if ((task_data->type_ == c.type_) && (c.id_ == (MethodId)-1)) {
                         //processCondtion
-                        task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, true);
+                        task_data->task_(c.func_ptr_, true);
                         return true;
                     }
                 }
