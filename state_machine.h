@@ -25,14 +25,39 @@ namespace helper {
             RESPONSE,
             EVENT,
         };
-    public:
-        using Task = std::function<void(std::any method, bool general)>;
 
-        class MethodCallData {
+        class UnmatchedTask : public std::exception {
+        private:
+            std::string message;
+            MessageType message_type_;
+            MethodId method_id_;
+
         public:
-            MethodCallData(const Location& loc, const MessageType& t, const MethodId& id)
+            // 构造函数
+            UnmatchedTask(MessageType msgType, MethodId methodId, const std::string&msg) : message(msg) {
+                message_type_ = msgType;
+                method_id_ = methodId;
+                message = "Unmatched Task: MessageType=" + std::to_string(static_cast<int>(msgType)) + ", MethodId=" + std::to_string(static_cast<int>(methodId)) + ", " + msg;
+            }
+            // 构造函数
+            UnmatchedTask(const std::string& msg) : message(msg) {}
+
+            // 返回异常描述的函数，必须重写此函数
+            virtual const char* what() const noexcept override {
+                return message.c_str();
+            }
+
+            MessageType GetMessageType() const { return message_type_; }
+            MethodId GetMethodId() const { return method_id_; }
+        };
+    public:
+        using Task = std::function<void(std::any func)>;
+
+        class TaskData {
+        public:
+            TaskData(const Location& loc, const MessageType& t, const MethodId& id)
                 :loc_(loc), type_(t), id_(id) {}
-            virtual ~MethodCallData() {}
+            virtual ~TaskData() {}
         public:
             //在状态机中使用的信息
             Location loc_; //需要传递给状态机处理函数，定位问题需要。
@@ -218,6 +243,10 @@ namespace helper {
             return this->current_state_ == &this->final;
         }
 
+        void SetExceptionHandler(std::function<void(const std::exception*)> handler) {
+            exception_handler_ = handler;
+        }
+
     protected:
         State root;
         Final final;
@@ -226,52 +255,51 @@ namespace helper {
         std::map<std::string, BaseState*> stateId_map_;
         std::thread thread_run_;
         bool* thread_is_run_ = nullptr;
-        helper::MessageBuffer<std::shared_ptr<MethodCallData>> task_queue_;
+        helper::MessageBuffer<std::shared_ptr<TaskData>> task_queue_;
         std::string name_; //状态机名称，也用作线程名称
+        std::function<void(const std::exception*)> exception_handler_ = nullptr;
     private:
         //添加任务，packaged_task 中返回的future，不调用get()不会阻塞
-        template<typename RetType, typename Method, typename... Args>
+        template<typename RetType, typename FuncType, typename... Args>
         auto AddTask(Location&& loc, MessageType&& type, MethodId&& id, Args&&... args)
         {
-            // RetType = Method::result_type; //推导返回值类型
-            auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
+            // RetType = FuncType::result_type; //推导返回值类型
+            auto task_data = std::make_shared<StateMachine::TaskData>(loc, type, id);
 
-            using GeneralMethod = std::function<RetType(const Location& loc)>;
-            auto func = [&loc, &args...](std::any method_, bool general) {
-                if (general)
-                    return (std::any_cast<GeneralMethod>(method_))(loc);
-                else
-                    return (std::any_cast<Method>(method_))(loc, std::forward<Args>(args)...);
+            auto func = [&loc, &args...](std::any func_)->RetType {
+                    if(!func_.has_value()) {
+                        return RetType();
+                    }
+                    FuncType func = std::any_cast<FuncType>(func_);
+                    return func(loc, std::forward<Args>(args)...);
             };
 
             //在这里使用统一的packpaged类型
-            auto taskPack = std::make_shared<std::packaged_task<RetType(std::any method_, bool general)>>(func);
+            auto taskPack = std::make_shared<std::packaged_task<RetType(std::any func_)>>(func);
 
             std::future<RetType> futureRet = taskPack->get_future();
-            task_data->task_ = [taskPack](std::any method_, bool general)->void { (*taskPack)(method_, general); };
+            task_data->task_ = [taskPack](std::any func_)->void { (*taskPack)(func_); };
             task_queue_.Put(task_data);
 
             return futureRet;
         }
 
-        template<typename Method, typename... Args>
+        template<typename FuncType, typename... Args>
         auto AsyncAddTask(Location&& loc, MessageType&& type, MethodId&& id, Args&&... args)->void
         {
-            auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
-
-            using GeneralMethod = std::function<void(const Location& loc)>;
+            auto task_data = std::make_shared<StateMachine::TaskData>(loc, type, id);
             //参数使用临时变量
-            auto func = [loc, args...](std::any method_, bool general)->void {
-                if (general)
-                    return (std::any_cast<GeneralMethod>(method_))(loc);
-                else
-                    return (std::any_cast<Method>(method_))(loc, std::move(args)...);
+            auto func = [loc, args...](std::any func_)->void {
+                if (!func_.has_value()) {
+                    return ;
+                }
+                return std::any_cast<FuncType>(func_)(loc, std::move(args)...);
             };
 
             //在这里使用统一的packpaged类型
-            auto taskPack = std::make_shared<std::packaged_task<void(std::any method_, bool general)>>(func);
+            auto taskPack = std::make_shared<std::packaged_task<void(std::any func_)>>(func);
 
-            task_data->task_ = [taskPack](std::any method_, bool general)->void { (*taskPack)(method_, general); };
+            task_data->task_ = [taskPack](std::any func_)->void { (*taskPack)(func_); };
             task_queue_.Put(task_data);
             return;
 
@@ -457,18 +485,13 @@ namespace helper {
             }
         }
 
-        bool processTask(BaseState* filterState, std::shared_ptr<MethodCallData> task_data) {
+        bool processTask(BaseState* filterState, std::shared_ptr<TaskData> task_data) {
             auto state = dynamic_cast<State*>(filterState);
             if (state) {
                 for (const auto& c : state->cond) {
                     if ((task_data->type_ == c.type_) && (task_data->id_ == c.id_)) {
                         //processCondtion
-                        task_data->task_(c.func_ptr_, false);
-                        return true;
-                    }
-                    else if ((task_data->type_ == c.type_) && (c.id_ == (MethodId)-1)) {
-                        //processCondtion
-                        task_data->task_(c.func_ptr_, true);
+                        task_data->task_(c.func_ptr_);
                         return true;
                     }
                 }
@@ -504,7 +527,7 @@ namespace helper {
             processEntry(this->current_state_);
 
             while (*tmp_thread_is_run) {
-                std::shared_ptr<MethodCallData>  task_data;
+                std::shared_ptr<TaskData>  task_data;
                 if (task_queue_.Get(task_data) && task_data != nullptr) {
                     auto filterState = this->current_state_;
                     bool foundMsg = false;
@@ -513,6 +536,13 @@ namespace helper {
                         if (!foundMsg)
                         {
                             filterState = filterState->parent;
+                        }
+                    }
+                    if (!foundMsg) {
+                        task_data->task_(std::any()); //没有匹配的请求，直接返回，避免调用者一直等待
+                        if(exception_handler_){
+                            auto e = std::make_shared<UnmatchedTask>(task_data->type_, task_data->id_, "No matching condition found for the task.");
+                            exception_handler_(e.get());
                         }
                     }
                 }

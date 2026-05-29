@@ -97,7 +97,7 @@ public:
         this->root["children1"].onentry[0] = [this]() {std::cout << " onentry " << this->GetCurStateId() << std::endl; };
         this->root["children1"].onexit[0] = [this]() {std::cout << this->GetCurStateId() << " onexit " << std::endl; };
         this->root["children1"].cond[0] = {
-                  MessageType::REQUEST, MethodId::getStructValue, [this](const Location& loc) {
+                  MessageType::REQUEST, MethodId::getStructValue, (getStructValueFuncType)[this](const Location& loc) {
                       auto ret = this->getStructValue();
                       std::cout << __FILE__ << ":" << __LINE__ << " Transition to Brother State children2" << std::endl;
                       this->Transition("children2");

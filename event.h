@@ -2,9 +2,6 @@
 //  event.h
 //  helper
 //
-//  Created by boss on 2020/10/15.
-//  Copyright © 2020 boss. All rights reserved.
-//
 
 #pragma once
 
