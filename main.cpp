@@ -240,27 +240,27 @@ int main()
     stateMachine.Start();
 
     {
-        auto ret = stateMachine.AddRequetTask<getValueFuncType::result_type, getValueFuncType>(HELPER_FROM_HERE, MethodId::getValue);
+        auto ret = stateMachine.AddRequetTask<getValueFuncType>(HELPER_FROM_HERE, MethodId::getValue);
         std::cout << "getValue return :" << ret << std::endl;
     }
 
     {
         std::cout << std::endl << std::endl << std::endl;
-        auto ret = stateMachine.AddRequetTask<getStructValueFuncType::result_type, getStructValueFuncType>(HELPER_FROM_HERE, MethodId::getStructValue);
+			auto ret = stateMachine.AddRequetTask<getStructValueFuncType>(HELPER_FROM_HERE, MethodId::getStructValue);
         std::cout << "getStructValue return :{" << ret.name << "," << ret.id << "}" << std::endl;
     }
   
     {
         std::cout << std::endl << std::endl << std::endl;
         uint32_t val = 0;
-        auto ret = stateMachine.AddRequetTask<modifyPtrValueFuncType::result_type, modifyPtrValueFuncType>(HELPER_FROM_HERE, MethodId::modifyPtrValue, &val);
+        auto ret = stateMachine.AddRequetTask<modifyPtrValueFuncType>(HELPER_FROM_HERE, MethodId::modifyPtrValue, &val);
         std::cout << "modifyPtrValue  :" << val << std::endl;
     }
 
     {
         std::cout << std::endl << std::endl << std::endl;
         uint32_t val = 0;
-        auto ret = stateMachine.AddRequetTask<modifyReferenceFuncType::result_type, modifyReferenceFuncType>(HELPER_FROM_HERE, MethodId::modifyReference, val);
+        auto ret = stateMachine.AddRequetTask<modifyReferenceFuncType>(HELPER_FROM_HERE, MethodId::modifyReference, val);
         std::cout << "modifyReference " << ":" << val << std::endl;
     }
 
@@ -268,7 +268,7 @@ int main()
         std::cout << std::endl << std::endl << std::endl;
         uint32_t val = 2;
         std::cout << "Rightvalue address:" << &val << std::endl;
-         stateMachine.AddRequetTask<RightvalueFuncType::result_type, RightvalueFuncType>(HELPER_FROM_HERE, MethodId::Rightvalue, std::move(val));
+         stateMachine.AddRequetTask<RightvalueFuncType>(HELPER_FROM_HERE, MethodId::Rightvalue, std::move(val));
     }
 
     {

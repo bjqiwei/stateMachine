@@ -202,10 +202,10 @@ namespace helper {
             return thread_run_.get_id();
         }
 
-        template<typename RetType, typename Method, typename... Args>
+        template<typename FuncType, typename... Args>
         auto AddRequetTask(Location&& loc, MethodId&& id, Args&&... args)
         {
-            auto future = AddTask<RetType, Method, Args...>(std::forward<Location>(loc), MessageType::REQUEST, std::forward<MethodId>(id), std::forward<Args>(args)...);
+            auto future = AddTask<FuncType, Args...>(std::forward<Location>(loc), MessageType::REQUEST, std::forward<MethodId>(id), std::forward<Args>(args)...);
             return future.get();
         }
 
@@ -260,10 +260,10 @@ namespace helper {
         std::function<void(const std::exception*)> exception_handler_ = nullptr;
     private:
         //添加任务，packaged_task 中返回的future，不调用get()不会阻塞
-        template<typename RetType, typename FuncType, typename... Args>
+        template<typename FuncType, typename... Args>
         auto AddTask(Location&& loc, MessageType&& type, MethodId&& id, Args&&... args)
         {
-            // RetType = FuncType::result_type; //推导返回值类型
+            using RetType = typename FuncType::result_type; //推导返回值类型
             auto task_data = std::make_shared<StateMachine::TaskData>(loc, type, id);
 
             auto func = [&loc, &args...](std::any func_)->RetType {
