@@ -15,6 +15,13 @@
 
 namespace helper {
 
+	// 检测是否为 std::function
+	template<typename T>
+	struct is_std_function : std::false_type {};
+
+	template<typename Ret, typename... Args>
+	struct is_std_function<std::function<Ret(Args...)>> : std::true_type {};
+
 
     template <typename C, typename MethodId>
     class StateMachine {
@@ -88,6 +95,12 @@ namespace helper {
 
         struct Condition
         {
+			Condition() {};
+			template <typename F>
+			Condition(MessageType type, MethodId id, F&&func):
+				type_(type), id_(id), func_ptr_(func) {
+				static_assert(is_std_function<std::decay_t<F>>::value,"Parameter must be std::function type");
+			}
             MessageType type_;
             MethodId id_;
             std::any func_ptr_ = nullptr;
