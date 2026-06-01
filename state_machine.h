@@ -15,12 +15,25 @@
 
 namespace helper {
 
-	// 检测是否为 std::function
-	template<typename T>
-	struct is_std_function : std::false_type {};
+    // 检测是否为 std::function
+    template<typename T>
+    struct is_std_function : std::false_type {};
 
-	template<typename Ret, typename... Args>
-	struct is_std_function<std::function<Ret(Args...)>> : std::true_type {};
+    template<typename Ret, typename... Args>
+    struct is_std_function<std::function<Ret(Args...)>> : std::true_type {};
+
+
+    // 定义修改返回值类型的模板结构体
+    template<typename FuncType, typename NewRet>
+    struct ChangeReturnType;
+
+    template<typename Ret, typename... Args, typename NewRet>
+    struct ChangeReturnType<std::function<Ret(Args...)>, NewRet> {
+        using type = std::function<NewRet(Args...)>;
+    };
+
+    template<typename FuncType, typename NewRet>
+    using ChangeReturn = typename ChangeReturnType<FuncType, NewRet>::type;
 
 
     class StateMachine {
@@ -42,7 +55,7 @@ namespace helper {
             // 构造函数
             UnmatchedTask(MessageType msgType,const std::string& signature, const std::string&msg) : message(msg) {
                 message_type_ = msgType;
-				signature_ = signature;
+                signature_ = signature;
                 message = "Unmatched Task: MessageType=" + std::to_string(static_cast<int>(msgType)) + ", signature=" + signature + ", " + msg;
             }
             // 构造函数
@@ -54,10 +67,11 @@ namespace helper {
             }
 
             MessageType GetMessageType() const { return message_type_; }
-			const std::string& GetSignature() const { return signature_; }
+            const std::string& GetSignature() const { return signature_; }
         };
     public:
         using Task = std::function<void(std::any func)>;
+        using Cond = std::function<bool(std::any cond)>;
 
         class TaskData {
         public:
@@ -68,8 +82,9 @@ namespace helper {
             //在状态机中使用的信息
             Location loc_; //需要传递给状态机处理函数，定位问题需要。
             MessageType type_;
-			std::string signature_;
+            std::string signature_;
             Task task_;
+            Cond cond_;
         };
 
         using Action = std::function<void()>;
@@ -92,39 +107,61 @@ namespace helper {
             }
         };
 
-#define CONDITION(type, funcType, lambda) \
-        Condition(type, #funcType, (funcType)lambda)
-        struct Condition
+#define EVENT_2(funcType, lambda) \
+        Matching(MessageType::EVENT, #funcType, (funcType)lambda)
+#define EVENT_3(funcType, cond, lambda) \
+        Matching(MessageType::EVENT, #funcType, (helper::ChangeReturn<funcType, bool>)cond, (funcType)lambda)
+
+#define REQUEST_2(funcType, lambda) \
+        Matching(MessageType::REQUEST, #funcType, (funcType)lambda)
+#define REQUEST_3(funcType, cond, lambda) \
+        Matching(MessageType::REQUEST, #funcType, (helper::ChangeReturn<funcType, bool>)cond, (funcType)lambda)
+
+#define RESPONSE_2(funcType, lambda) \
+        Matching(MessageType::RESPONSE, #funcType, (funcType)lambda)
+#define RESPONSE_3(funcType,cond, lambda) \
+        Matching(MessageType::RESPONSE, #funcType,(helper::ChangeReturn<funcType, bool>)cond, (funcType)lambda)
+
+        struct Matching
         {
-			Condition() {};
-			template <typename F>
-			Condition(MessageType type, const std::string& signature, F&&func):
-				type_(type), func_(func) {
-				static_assert(is_std_function<std::decay_t<F>>::value,"Parameter must be std::function type");
-				signature_ = func_.type().name() + signature;
-			}
+            Matching() {};
+            template <typename F>
+            Matching(MessageType type, const std::string& signature, F&&func):
+                type_(type), func_(func) {
+                static_assert(is_std_function<std::decay_t<F>>::value,"Parameter must be std::function type");
+                signature_ = func_.type().name() + signature;
+            }
+            template <typename F, typename F2>
+            Matching(MessageType type, const std::string& signature,  F2&& cond, F&& func) :
+                type_(type), func_(func) {
+                static_assert(is_std_function<std::decay_t<F>>::value, "Parameter must be std::function type");
+                signature_ = func_.type().name() + signature;
+                static_assert(is_std_function<std::decay_t<F2>>::value, "Parameter must be std::function type");
+                cond_ = cond;
+            }
             MessageType type_;
-			std::string signature_;
+            std::any cond_;
+            std::string signature_;
             std::any func_;
         };
 
-        class ConditionVector : public std::vector<Condition> {
+        class MatchingVector : public std::vector<Matching> {
         public:
-            ConditionVector() = default;
-            ~ConditionVector() = default;
+            MatchingVector() = default;
+            ~MatchingVector() = default;
 
-            ConditionVector& operator +(const Condition& _cond)
+            MatchingVector& operator +(const Matching& _cond)
             {
                 this->push_back(_cond);
                 return *this;
             }
 
-            Condition& operator[](const std::size_t _pos)
+            Matching& operator[](const std::size_t _pos)
             {
                 if (this->size() < _pos + 1) {
                     this->resize(_pos + 1);
                 }
-                return std::vector<Condition>::operator[](_pos);
+                return std::vector<Matching>::operator[](_pos);
             };
         };
 
@@ -173,7 +210,7 @@ namespace helper {
                 return children[keyval];
             }
         public:
-            ConditionVector cond;
+            MatchingVector match;
             std::map<std::string, State> children;
             std::map<std::string, Parallel> parallel;
             friend class StateMachine;
@@ -223,7 +260,7 @@ namespace helper {
         template<typename FuncType, typename... Args>
         auto AddRequetTask(Location&& loc, const char* signature, Args&&... args)
         {
-			static_assert(is_std_function<std::decay_t<FuncType>>::value, "Parameter must be std::function type");
+            static_assert(is_std_function<std::decay_t<FuncType>>::value, "Parameter must be std::function type");
             auto future = AddTask<FuncType, Args...>(std::forward<Location>(loc), MessageType::REQUEST, signature, std::forward<Args>(args)...);
             return future.get();
         }
@@ -235,7 +272,7 @@ namespace helper {
         template<typename FuncType, typename... Args> //不等待返回
         void AddResponseTask(Location&& loc, const char* signature, Args&&... args)
         {
-			static_assert(is_std_function<std::decay_t<FuncType>>::value, "Parameter must be std::function type");
+            static_assert(is_std_function<std::decay_t<FuncType>>::value, "Parameter must be std::function type");
             AsyncAddTask<FuncType>(std::forward<Location>(loc), MessageType::RESPONSE, signature, std::forward<Args>(args)...);
             return;
         }
@@ -246,7 +283,7 @@ namespace helper {
         template<typename FuncType, typename... Args>//不等待返回
         void AddEventTask(Location&& loc, const char * signature, Args&&... args)
         {
-			static_assert(is_std_function<std::decay_t<FuncType>>::value, "Parameter must be std::function type");
+            static_assert(is_std_function<std::decay_t<FuncType>>::value, "Parameter must be std::function type");
             AsyncAddTask<FuncType>(std::forward<Location>(loc), MessageType::EVENT, signature, std::forward<Args>(args)...);
             return;
         }
@@ -307,6 +344,16 @@ namespace helper {
 
             std::future<RetType> futureRet = taskPack->get_future();
             task_data->task_ = [taskPack](std::any func_)->void { (*taskPack)(func_); };
+
+            auto cond = [&loc, &args...](std::any cond_)->bool {
+                if (!cond_.has_value()) {
+                    return true;
+                }
+                auto cond = std::any_cast<helper::ChangeReturn<FuncType, bool>>(cond_);
+                return cond(loc, std::forward<Args>(args)...);
+                };
+
+            task_data->cond_ = cond;
             task_queue_.Put(task_data);
 
             return futureRet;
@@ -328,6 +375,17 @@ namespace helper {
             auto taskPack = std::make_shared<std::packaged_task<void(std::any func_)>>(func);
 
             task_data->task_ = [taskPack](std::any func_)->void { (*taskPack)(func_); };
+
+            auto cond = [&loc, &args...](std::any cond_)->bool {
+                if (!cond_.has_value()) {
+                    return true;
+                }
+                auto cond = std::any_cast<helper::ChangeReturn<FuncType, bool>>(cond_);
+                return cond(loc, std::forward<Args>(args)...);
+            };
+
+            task_data->cond_ = cond;
+
             task_queue_.Put(task_data);
             return;
 
@@ -516,8 +574,10 @@ namespace helper {
         bool processTask(BaseState* filterState, std::shared_ptr<TaskData> task_data) {
             auto state = dynamic_cast<State*>(filterState);
             if (state) {
-                for (const auto& c : state->cond) {
-                    if ((task_data->type_ == c.type_) && (task_data->signature_ == c.signature_)) {
+                for (const auto& c : state->match) {
+                    if (task_data->type_ == c.type_ 
+                        && task_data->signature_ == c.signature_
+                        && task_data->cond_(c.cond_)) {
                         //processCondtion
                         task_data->task_(c.func_);
                         return true;
