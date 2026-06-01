@@ -4,6 +4,7 @@
 #include <string>
 #include <thread>
 #include <future>
+#include <any>
 #include <map>
 #include <list>
 #include <algorithm>
@@ -14,8 +15,27 @@
 
 namespace helper {
 
+    // 检测是否为 std::function
+    template<typename T>
+    struct is_std_function : std::false_type {};
 
-    template <typename C, typename MethodId>
+    template<typename Ret, typename... Args>
+    struct is_std_function<std::function<Ret(Args...)>> : std::true_type {};
+
+
+    // 定义修改返回值类型的模板结构体
+    template<typename FuncType, typename NewRet>
+    struct ChangeReturnType;
+
+    template<typename Ret, typename... Args, typename NewRet>
+    struct ChangeReturnType<std::function<Ret(Args...)>, NewRet> {
+        using type = std::function<NewRet(Args...)>;
+    };
+
+    template<typename FuncType, typename NewRet>
+    using ChangeReturn = typename ChangeReturnType<FuncType, NewRet>::type;
+
+
     class StateMachine {
     public:
         enum class MessageType {
@@ -24,20 +44,47 @@ namespace helper {
             RESPONSE,
             EVENT,
         };
-    public:
-        using Task = std::function<void(C* class_, void* method, bool general)>;
 
-        class MethodCallData {
+        class UnmatchedTask : public std::exception {
+        private:
+            std::string message;
+            MessageType message_type_;
+            std::string signature_;
+
         public:
-            MethodCallData(const Location& loc, const MessageType& t, const MethodId& id)
-                :loc_(loc), type_(t), id_(id) {}
-            virtual ~MethodCallData() {}
+            // 构造函数
+            UnmatchedTask(MessageType msgType,const std::string& signature, const std::string&msg) : message(msg) {
+                message_type_ = msgType;
+                signature_ = signature;
+                message = "Unmatched Task: MessageType=" + std::to_string(static_cast<int>(msgType)) + ", signature=" + signature + ", " + msg;
+            }
+            // 构造函数
+            UnmatchedTask(const std::string& msg) : message(msg) {}
+
+            // 返回异常描述的函数，必须重写此函数
+            virtual const char* what() const noexcept override {
+                return message.c_str();
+            }
+
+            MessageType GetMessageType() const { return message_type_; }
+            const std::string& GetSignature() const { return signature_; }
+        };
+    public:
+        using Task = std::function<void(std::any func)>;
+        using Cond = std::function<bool(std::any cond)>;
+
+        class TaskData {
+        public:
+            TaskData(const Location& loc, const MessageType& type, const std::string& signature)
+                :loc_(loc), type_(type), signature_(signature) {}
+            virtual ~TaskData() {}
         public:
             //在状态机中使用的信息
             Location loc_; //需要传递给状态机处理函数，定位问题需要。
             MessageType type_;
-            MethodId id_;
+            std::string signature_;
             Task task_;
+            Cond cond_;
         };
 
         using Action = std::function<void()>;
@@ -60,30 +107,61 @@ namespace helper {
             }
         };
 
-        struct Condition
+#define EVENT_2(funcType, lambda) \
+        Matching(MessageType::EVENT, #funcType, (funcType)lambda)
+#define EVENT_3(funcType, cond, lambda) \
+        Matching(MessageType::EVENT, #funcType, (helper::ChangeReturn<funcType, bool>)cond, (funcType)lambda)
+
+#define REQUEST_2(funcType, lambda) \
+        Matching(MessageType::REQUEST, #funcType, (funcType)lambda)
+#define REQUEST_3(funcType, cond, lambda) \
+        Matching(MessageType::REQUEST, #funcType, (helper::ChangeReturn<funcType, bool>)cond, (funcType)lambda)
+
+#define RESPONSE_2(funcType, lambda) \
+        Matching(MessageType::RESPONSE, #funcType, (funcType)lambda)
+#define RESPONSE_3(funcType,cond, lambda) \
+        Matching(MessageType::RESPONSE, #funcType,(helper::ChangeReturn<funcType, bool>)cond, (funcType)lambda)
+
+        struct Matching
         {
+            Matching() {};
+            template <typename F>
+            Matching(MessageType type, const std::string& signature, F&&func):
+                type_(type), func_(func) {
+                static_assert(is_std_function<std::decay_t<F>>::value,"Parameter must be std::function type");
+                signature_ = func_.type().name() + signature;
+            }
+            template <typename F, typename F2>
+            Matching(MessageType type, const std::string& signature,  F2&& cond, F&& func) :
+                type_(type), func_(func) {
+                static_assert(is_std_function<std::decay_t<F>>::value, "Parameter must be std::function type");
+                signature_ = func_.type().name() + signature;
+                static_assert(is_std_function<std::decay_t<F2>>::value, "Parameter must be std::function type");
+                cond_ = cond;
+            }
             MessageType type_;
-            MethodId id_;
-            void* func_ptr_ = nullptr;
+            std::any cond_;
+            std::string signature_;
+            std::any func_;
         };
 
-        class ConditionVector : public std::vector<Condition> {
+        class MatchingVector : public std::vector<Matching> {
         public:
-            ConditionVector() = default;
-            ~ConditionVector() = default;
+            MatchingVector() = default;
+            ~MatchingVector() = default;
 
-            ConditionVector& operator +(const Condition& _cond)
+            MatchingVector& operator +(const Matching& _cond)
             {
                 this->push_back(_cond);
                 return *this;
             }
 
-            Condition& operator[](const std::size_t _pos)
+            Matching& operator[](const std::size_t _pos)
             {
                 if (this->size() < _pos + 1) {
                     this->resize(_pos + 1);
                 }
-                return std::vector<Condition>::operator[](_pos);
+                return std::vector<Matching>::operator[](_pos);
             };
         };
 
@@ -132,7 +210,7 @@ namespace helper {
                 return children[keyval];
             }
         public:
-            ConditionVector cond;
+            MatchingVector match;
             std::map<std::string, State> children;
             std::map<std::string, Parallel> parallel;
             friend class StateMachine;
@@ -176,24 +254,37 @@ namespace helper {
             return thread_run_.get_id();
         }
 
-        template<typename Method, typename... Args>
-        auto AddRequetTask(Location&& loc, MethodId&& id, Args&&... args)
+#define ADD_REQUEST_TASK(FuncType, ...) \
+        AddRequetTask<FuncType>(HELPER_FROM_HERE, #FuncType, ##__VA_ARGS__)
+
+        template<typename FuncType, typename... Args>
+        auto AddRequetTask(Location&& loc, const char* signature, Args&&... args)
         {
-            auto future = AddTask<Method, Args...>(std::forward<Location>(loc), MessageType::REQUEST, std::forward<MethodId>(id), std::forward<Args>(args)...);
+            static_assert(is_std_function<std::decay_t<FuncType>>::value, "Parameter must be std::function type");
+            auto future = AddTask<FuncType, Args...>(std::forward<Location>(loc), MessageType::REQUEST, signature, std::forward<Args>(args)...);
             return future.get();
         }
 
-        template<typename Method, typename... Args> //不等待返回
-        void AddResponseTask(Location&& loc, MethodId&& id, Args&&... args)
+
+#define ADD_RESPONSE_TASK(FuncType, ...) \
+        AddResponseTask<FuncType>(HELPER_FROM_HERE, #FuncType, ##__VA_ARGS__)
+
+        template<typename FuncType, typename... Args> //不等待返回
+        void AddResponseTask(Location&& loc, const char* signature, Args&&... args)
         {
-            AsyncAddTask<Method>(std::forward<Location>(loc), MessageType::RESPONSE, std::forward<MethodId>(id), std::forward<Args>(args)...);
+            static_assert(is_std_function<std::decay_t<FuncType>>::value, "Parameter must be std::function type");
+            AsyncAddTask<FuncType>(std::forward<Location>(loc), MessageType::RESPONSE, signature, std::forward<Args>(args)...);
             return;
         }
 
-        template<typename Method, typename... Args>//不等待返回
-        void AddEventTask(Location&& loc, MethodId&& id, Args&&... args)
+#define ADD_EVENT_TASK(FuncType, ...) \
+        AddEventTask<FuncType>(HELPER_FROM_HERE, #FuncType, ##__VA_ARGS__)
+
+        template<typename FuncType, typename... Args>//不等待返回
+        void AddEventTask(Location&& loc, const char * signature, Args&&... args)
         {
-            AsyncAddTask<Method>(std::forward<Location>(loc), MessageType::EVENT, std::forward<MethodId>(id), std::forward<Args>(args)...);
+            static_assert(is_std_function<std::decay_t<FuncType>>::value, "Parameter must be std::function type");
+            AsyncAddTask<FuncType>(std::forward<Location>(loc), MessageType::EVENT, signature, std::forward<Args>(args)...);
             return;
         }
 
@@ -217,6 +308,10 @@ namespace helper {
             return this->current_state_ == &this->final;
         }
 
+        void SetExceptionHandler(std::function<void(const std::exception*)> handler) {
+            exception_handler_ = handler;
+        }
+
     protected:
         State root;
         Final final;
@@ -225,53 +320,72 @@ namespace helper {
         std::map<std::string, BaseState*> stateId_map_;
         std::thread thread_run_;
         bool* thread_is_run_ = nullptr;
-        helper::MessageBuffer<std::shared_ptr<MethodCallData>> task_queue_;
+        helper::MessageBuffer<std::shared_ptr<TaskData>> task_queue_;
         std::string name_; //状态机名称，也用作线程名称
+        std::function<void(const std::exception*)> exception_handler_ = nullptr;
     private:
         //添加任务，packaged_task 中返回的future，不调用get()不会阻塞
-        template<typename Method, typename... Args>
-        auto AddTask(Location&& loc, MessageType&& type, MethodId&& id, Args&&... args)
+        template<typename FuncType, typename... Args>
+        auto AddTask(Location&& loc, MessageType&& type, const char * signature, Args&&... args)
         {
+            using RetType = typename FuncType::result_type; //推导返回值类型
+            auto task_data = std::make_shared<StateMachine::TaskData>(loc, type, std::string(typeid(FuncType).name()) + signature);
 
-            using RetType = decltype(((Method)nullptr)(nullptr, loc, std::forward<Args>(args)...)); //推导返回值类型
-            auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
-
-            typedef RetType(*GeneralMethod)(C* class_, const Location& loc);
-            auto func = [&loc, &args...](C* class_, void* method_, bool general) {
-                if (general)
-                    return ((GeneralMethod)(method_))(class_, loc);
-                else
-                    return ((Method)(method_))(class_, loc, std::forward<Args>(args)...);
+            auto func = [&loc, &args...](std::any func_)->RetType {
+                    if(!func_.has_value()) {
+                        return RetType();
+                    }
+                    FuncType func = std::any_cast<FuncType>(func_);
+                    return func(loc, std::forward<Args>(args)...);
             };
 
             //在这里使用统一的packpaged类型
-            auto taskPack = std::make_shared<std::packaged_task<RetType(C* class_, void* method_, bool general)>>(func);
+            auto taskPack = std::make_shared<std::packaged_task<RetType(std::any func_)>>(func);
 
             std::future<RetType> futureRet = taskPack->get_future();
-            task_data->task_ = [taskPack](C* class_, void* method_, bool general)->void { (*taskPack)(class_, method_, general); };
+            task_data->task_ = [taskPack](std::any func_)->void { (*taskPack)(func_); };
+
+            auto cond = [&loc, &args...](std::any cond_)->bool {
+                if (!cond_.has_value()) {
+                    return true;
+                }
+                auto cond = std::any_cast<helper::ChangeReturn<FuncType, bool>>(cond_);
+                return cond(loc, std::forward<Args>(args)...);
+                };
+
+            task_data->cond_ = cond;
             task_queue_.Put(task_data);
 
             return futureRet;
         }
 
-        template<typename Method, typename... Args>
-        auto AsyncAddTask(Location&& loc, MessageType&& type, MethodId&& id, Args&&... args)->void
+        template<typename FuncType, typename... Args>
+        auto AsyncAddTask(Location&& loc, MessageType&& type, const char* signature, Args&&... args)->void
         {
-            auto task_data = std::make_shared<StateMachine::MethodCallData>(loc, type, id);
-
-            typedef void(*GeneralMethod)(C* class_, const Location& loc);
+            auto task_data = std::make_shared<StateMachine::TaskData>(loc, type, std::string(typeid(FuncType).name()) + signature);
             //参数使用临时变量
-            auto func = [loc, args...](C* class_, void* method_, bool general)->void {
-                if (general)
-                    return ((GeneralMethod)(method_))(class_, loc);
-                else
-                    return ((Method)(method_))(class_, loc, std::move(args)...);
+            auto func = [loc, args...](std::any func_)->void {
+                if (!func_.has_value()) {
+                    return ;
+                }
+                return std::any_cast<FuncType>(func_)(loc, std::move(args)...);
             };
 
             //在这里使用统一的packpaged类型
-            auto taskPack = std::make_shared<std::packaged_task<void(C* class_, void* method_, bool general)>>(func);
+            auto taskPack = std::make_shared<std::packaged_task<void(std::any func_)>>(func);
 
-            task_data->task_ = [taskPack](C* class_, void* method_, bool general)->void { (*taskPack)(class_, method_, general); };
+            task_data->task_ = [taskPack](std::any func_)->void { (*taskPack)(func_); };
+
+            auto cond = [&loc, &args...](std::any cond_)->bool {
+                if (!cond_.has_value()) {
+                    return true;
+                }
+                auto cond = std::any_cast<helper::ChangeReturn<FuncType, bool>>(cond_);
+                return cond(loc, std::forward<Args>(args)...);
+            };
+
+            task_data->cond_ = cond;
+
             task_queue_.Put(task_data);
             return;
 
@@ -457,18 +571,15 @@ namespace helper {
             }
         }
 
-        bool processTask(BaseState* filterState, std::shared_ptr<MethodCallData> task_data) {
+        bool processTask(BaseState* filterState, std::shared_ptr<TaskData> task_data) {
             auto state = dynamic_cast<State*>(filterState);
             if (state) {
-                for (const auto& c : state->cond) {
-                    if ((task_data->type_ == c.type_) && (task_data->id_ == c.id_)) {
+                for (const auto& c : state->match) {
+                    if (task_data->type_ == c.type_ 
+                        && task_data->signature_ == c.signature_
+                        && task_data->cond_(c.cond_)) {
                         //processCondtion
-                        task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, false);
-                        return true;
-                    }
-                    else if ((task_data->type_ == c.type_) && (c.id_ == (MethodId)-1)) {
-                        //processCondtion
-                        task_data->task_(dynamic_cast<C*>(this), c.func_ptr_, true);
+                        task_data->task_(c.func_);
                         return true;
                     }
                 }
@@ -504,7 +615,7 @@ namespace helper {
             processEntry(this->current_state_);
 
             while (*tmp_thread_is_run) {
-                std::shared_ptr<MethodCallData>  task_data;
+                std::shared_ptr<TaskData>  task_data;
                 if (task_queue_.Get(task_data) && task_data != nullptr) {
                     auto filterState = this->current_state_;
                     bool foundMsg = false;
@@ -513,6 +624,13 @@ namespace helper {
                         if (!foundMsg)
                         {
                             filterState = filterState->parent;
+                        }
+                    }
+                    if (!foundMsg) {
+                        task_data->task_(std::any()); //没有匹配的请求，直接返回，避免调用者一直等待
+                        if(exception_handler_){
+                            auto e = std::make_shared<UnmatchedTask>(task_data->type_, task_data->signature_, "No matching condition found for the task.");
+                            exception_handler_(e.get());
                         }
                     }
                 }
