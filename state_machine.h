@@ -48,7 +48,7 @@ namespace helper {
         class UnmatchedTask : public std::exception {
         private:
             std::string message;
-            MessageType message_type_;
+            MessageType message_type_  = MessageType::ANYTYPE;
             std::string signature_;
 
         public:
@@ -526,9 +526,11 @@ namespace helper {
                     }
                 }
             }
-            this->current_state_ = leave;
-            this->current_state_->active_ = false;
-            processOnExit(this->current_state_);
+            if (leave) {
+                this->current_state_ = leave;
+                this->current_state_->active_ = false;
+                processOnExit(this->current_state_);
+            }
         }
 
         void processEntry(BaseState* entry) {
