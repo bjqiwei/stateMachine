@@ -139,7 +139,7 @@ namespace helper {
                 static_assert(is_std_function<std::decay_t<F2>>::value, "Parameter must be std::function type");
                 cond_ = cond;
             }
-            MessageType type_;
+            MessageType type_ = MessageType::ANYTYPE;
             std::any cond_;
             std::string signature_;
             std::any func_;
